@@ -140,7 +140,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         </Card>
 
         <Card className="lg:col-span-2">
-          <CardHeader><CardTitle>Партии на складе</CardTitle><CardDescription>Приход товара и учёт партий — этап 2</CardDescription></CardHeader>
+          <CardHeader><CardTitle>Партии на складе</CardTitle><CardDescription>Себестоимость по партиям, списание по FIFO · <Link href={`/inventory/receive?productId=${p.id}`} className="text-primary hover:underline">Оприходовать партию</Link></CardDescription></CardHeader>
           <CardContent>
             {p.stockBatches.length === 0 ? (
               <p className="text-sm text-muted-foreground">Партий нет.</p>

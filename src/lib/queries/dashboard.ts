@@ -7,7 +7,7 @@ import { getBusinessSettings } from "@/lib/settings";
 
 const DAY = 86400_000;
 
-async function loadSales(from: Date, to: Date): Promise<SaleRow[]> {
+export async function loadSales(from: Date, to: Date): Promise<SaleRow[]> {
   const items = await db.orderItem.findMany({
     where: { order: { orderedAt: { gte: from, lte: to } } },
     select: {
@@ -38,7 +38,7 @@ async function loadSales(from: Date, to: Date): Promise<SaleRow[]> {
   }));
 }
 
-async function sumExpenses(from: Date, to: Date) {
+export async function sumExpenses(from: Date, to: Date) {
   const agg = await db.expense.aggregate({ where: { date: { gte: from, lte: to } }, _sum: { amountKzt: true } });
   return toNum(agg._sum.amountKzt) ?? 0;
 }

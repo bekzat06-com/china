@@ -10,6 +10,8 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // импорт Excel/CSV до 5 МБ (с запасом на служебные данные)
+  experimental: { serverActions: { bodySizeLimit: "8mb" } },
   // standalone-сборка нужна только для Docker-образа (см. Dockerfile)
   output: process.env.NEXT_OUTPUT === "standalone" ? "standalone" : undefined,
   async headers() {
