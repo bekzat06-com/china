@@ -4,6 +4,9 @@ import { execSync } from "node:child_process";
 
 const run = (cmd, env = process.env) => execSync(cmd, { stdio: "inherit", env });
 
+// Генерируем Prisma Client явно: новые версии npm могут не запускать установочные скрипты пакетов
+run("npx prisma generate");
+
 if (process.env.DATABASE_URL) {
   // Для миграций нужен прямой (не пуловый) адрес базы, если провайдер его даёт (Neon: DATABASE_URL_UNPOOLED)
   const direct = process.env.DATABASE_URL_UNPOOLED || process.env.POSTGRES_URL_NON_POOLING || process.env.DATABASE_URL;
