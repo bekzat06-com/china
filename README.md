@@ -1,36 +1,140 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ILYAS AI COMMERCE
 
-## Getting Started
+ИИ-бизнес-аналитик для товарного бизнеса на Kaspi (Казахстан, Алматы).
+Считает прибыль, полную себестоимость товара из Китая, остатки и подсказывает, что делать.
 
-First, run the development server:
+**Сейчас готов этап 1** — фундамент: база данных, вход, главная страница с аналитикой, товары, калькулятор себестоимости, настройки, журнал операций.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+---
+
+## Быстрый старт на Windows
+
+### 1. Установите программы (один раз)
+
+| Программа | Где взять | Проверка в PowerShell |
+|---|---|---|
+| Node.js 22 LTS | https://nodejs.org | `node -v` |
+| Git | https://git-scm.com | `git --version` |
+| Docker Desktop | https://www.docker.com/products/docker-desktop | `docker --version` |
+
+Docker нужен только для базы данных PostgreSQL. Если не хотите Docker — установите PostgreSQL 16 с https://www.postgresql.org/download/windows/.
+
+### 2. Запустите базу данных
+
+```powershell
+docker compose up -d db
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 3. Настройте переменные окружения
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```powershell
+copy .env.example .env
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Откройте `.env` в редакторе и заполните:
+- `DATABASE_URL` — замените `CHANGE_ME` на `ilyas_dev_password` (пароль из docker-compose.yml);
+- `AUTH_SECRET` — длинная случайная строка. Сгенерировать:
+  ```powershell
+  node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"
+  ```
+- `OWNER_EMAIL`, `OWNER_PASSWORD` — ваш логин и пароль для входа.
 
-## Learn More
+### 4. Установите зависимости, создайте таблицы и заполните базу
 
-To learn more about Next.js, take a look at the following resources:
+```powershell
+npm install
+```
+```powershell
+npx prisma migrate deploy
+```
+```powershell
+npm run db:seed
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### 5. Запустите сайт
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```powershell
+npm run dev
+```
 
-## Deploy on Vercel
+Откройте в браузере: **http://localhost:3000**
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+---
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Полезные команды
+
+| Команда | Что делает |
+|---|---|
+| `npm run dev` | Запуск в режиме разработки (изменения видны сразу) |
+| `npm run build` и `npm start` | Сборка и запуск «боевой» версии |
+| `npm test` | Тесты финансовых расчётов |
+| `npm run check` | TypeScript + линтер + тесты |
+| `npm run db:studio` | Просмотр базы данных в браузере |
+| `npm run db:backup` | Резервная копия базы в папку `backups/` |
+| `docker compose --profile app up -d --build` | База + приложение в Docker |
+
+---
+
+## Архитектура
+
+```
+src/
+├── app/
+│   ├── (app)/              страницы личного кабинета (только после входа)
+│   │   ├── page.tsx        главная — Dashboard
+│   │   ├── products/       товары: список, карточка, создание, редактирование
+│   │   ├── calculator/     калькулятор полной себестоимости
+│   │   ├── settings/       курсы, ставки, демо-данные, статус интеграций
+│   │   ├── audit/          журнал операций (только владелец)
+│   │   └── …               страницы модулей этапов 2–7 (пока описание)
+│   ├── actions/            серверные действия (проверка прав + валидация + журнал)
+│   ├── api/health/         проверка работоспособности
+│   └── login/              вход
+├── lib/
+│   ├── finance/            ЧИСТЫЕ ФОРМУЛЫ: себестоимость, прибыль, ABC (покрыты тестами)
+│   ├── inventory/          остатки и рекомендации по закупке (покрыты тестами)
+│   ├── queries/            сбор данных из базы для страниц
+│   ├── auth/               сессии (JWT в httpOnly-cookie), роли, ограничение попыток входа
+│   ├── settings.ts         настройки бизнеса
+│   └── audit.ts            запись в журнал операций
+├── components/             интерфейс (компоненты в стиле shadcn/ui)
+└── middleware.ts           защита всех страниц и API
+prisma/
+├── schema.prisma           структура базы (таблицы для всех 7 этапов)
+├── migrations/             миграции
+└── seed.ts                 владелец + настройки + демо-данные
+tests/                      тесты (Vitest)
+```
+
+### Принципы
+
+- **Формулы отдельно от интерфейса.** Все расчёты — в `src/lib/finance`, их легко проверить тестами и переиспользовать для ИИ и Telegram.
+- **Деньги — в `Decimal`**, не в числах с плавающей точкой.
+- **Нет «зашитых» ставок.** Налоги, пошлины, комиссии Kaspi — настраиваются.
+- **Демо-данные помечены** (`isDemo`), видны значком «ДЕМО» и удаляются одной кнопкой (с подтверждением паролем).
+- **ИИ ничего не делает сам**: оплаты, изменение цен, заказы и отправка сообщений — только с подтверждения владельца.
+
+### Безопасность (этап 1)
+
+- Вход по e-mail и паролю (bcrypt), сессия в httpOnly-cookie, 7 дней.
+- Ограничение: 5 неудачных попыток входа за 15 минут.
+- Роли: Владелец / Менеджер / Просмотр; права проверяются на сервере в каждом действии.
+- Все входные данные проверяются схемами Zod; запросы к базе — через Prisma (защита от SQL-инъекций).
+- Журнал операций: входы, неудачные входы, изменения товаров, настроек, расчётов.
+- Секреты только в `.env` (не попадает в git и в браузер).
+- Заголовки безопасности (запрет встраивания во фреймы и др.).
+- Резервное копирование: `npm run db:backup`.
+
+---
+
+## Статус модулей
+
+| Этап | Модуль | Статус |
+|---|---|---|
+| 1 | Вход, роли, журнал, Dashboard, товары, калькулятор, настройки | ✅ готово |
+| 2 | Склад и закупки, импорт Excel/CSV, отчёты | ⏳ таблицы и формулы готовы, интерфейс — далее |
+| 3 | Kaspi API | ⏳ после изучения официальной документации |
+| 4 | Конкуренты, AI Product Hunter | ⏳ |
+| 5 | Поставщики Китая, переговоры | ⏳ |
+| 6 | ИИ-аналитик, финансовый директор | ⏳ нужен ключ Anthropic или OpenAI |
+| 7 | Telegram, n8n, расписание | ⏳ нужен токен бота |

@@ -1,0 +1,321 @@
+// ILYAS AI COMMERCE — схема базы данных (PostgreSQL + Prisma)
+// Деньги храним в Decimal, чтобы не терять точность (не Float).
+// Поле isDemo = true означает демонстрационные данные — они помечаются в интерфейсе
+// и удаляются одной кнопкой в «Настройках».
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────── Пользователи и безопасность ─────────────
+
+enum Role {
+  OWNER   // владелец: всё, включая финансово значимые действия
+  MANAGER // менеджер: товары, склад, расчёты
+  VIEWER  // только просмотр
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  name         String
+  passwordHash String
+  role         Role       @default(VIEWER)
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  lastLoginAt  DateTime?
+  auditLogs    AuditLog[]
+  calculations CostCalculation[]
+}
+
+// Журнал операций: кто, что и когда сделал
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String // например: product.create, settings.update, auth.login_failed
+  entity    String?
+  entityId  String?
+  details   Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entity, entityId])
+}
+
+// Настройки: курсы валют, ставки по умолчанию и т.п. (ключ → JSON)
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+// ───────────── Каталог товаров ─────────────
+
+model Category {
+  id       String     @id @default(cuid())
+  name     String     @unique
+  parentId String?
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryTree")
+  products Product[]
+}
+
+enum ProductStatus {
+  IDEA     // идея / исследование
+  ACTIVE   // продаётся
+  PAUSED   // приостановлен
+  ARCHIVED // в архиве
+}
+
+model Product {
+  id               String        @id @default(cuid())
+  sku              String        @unique
+  name             String
+  nameZh           String? // название на китайском для поиска у поставщиков
+  description      String?
+  categoryId       String?
+  category         Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  status           ProductStatus @default(ACTIVE)
+  purchasePriceCny Decimal?      @db.Decimal(14, 2)
+  salePriceKzt     Decimal?      @db.Decimal(14, 2)
+  kaspiCommissionPct Decimal?    @db.Decimal(6, 3) // если пусто — берётся из настроек
+  weightKg         Decimal?      @db.Decimal(10, 3)
+  lengthCm         Decimal?      @db.Decimal(10, 2)
+  widthCm          Decimal?      @db.Decimal(10, 2)
+  heightCm         Decimal?      @db.Decimal(10, 2)
+  minStock         Int           @default(0)
+  needsCertification Boolean     @default(false)
+  kaspiProductUrl  String?
+  isDemo           Boolean       @default(false)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  calculations     CostCalculation[]
+  stockBatches     StockBatch[]
+  stockMovements   StockMovement[]
+  orderItems       OrderItem[]
+  competitorLinks  CompetitorProduct[]
+  supplierOffers   SupplierOffer[]
+
+  @@index([status])
+  @@index([categoryId])
+}
+
+// Сохранённый расчёт полной себестоимости (входные данные + результат)
+model CostCalculation {
+  id        String   @id @default(cuid())
+  name      String
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  inputs    Json
+  results   Json
+  createdAt DateTime @default(now())
+
+  @@index([productId])
+}
+
+// ───────────── Склад ─────────────
+
+// Партия товара: позволяет считать себестоимость по партиям (FIFO)
+model StockBatch {
+  id           String   @id @default(cuid())
+  productId    String
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity     Int
+  remaining    Int
+  unitCostKzt  Decimal  @db.Decimal(14, 2)
+  supplierId   String?
+  supplier     Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  receivedAt   DateTime @default(now())
+  note         String?
+  isDemo       Boolean  @default(false)
+
+  @@index([productId])
+}
+
+enum MovementType {
+  IN       // приход
+  OUT      // продажа / списание
+  RESERVE  // резерв
+  UNRESERVE
+  RETURN   // возврат от покупателя
+  ADJUST   // корректировка инвентаризации
+}
+
+model StockMovement {
+  id          String       @id @default(cuid())
+  productId   String
+  product     Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  type        MovementType
+  quantity    Int // всегда положительное число; знак определяется типом
+  unitCostKzt Decimal?     @db.Decimal(14, 2)
+  refType     String? // order, batch, manual
+  refId       String?
+  note        String?
+  isDemo      Boolean      @default(false)
+  createdAt   DateTime     @default(now())
+
+  @@index([productId, createdAt])
+}
+
+// ───────────── Продажи ─────────────
+
+enum OrderSource {
+  MANUAL    // введено вручную
+  IMPORT    // импорт Excel/CSV
+  KASPI_API // официальный API Kaspi (этап 3)
+}
+
+enum OrderStatus {
+  NEW
+  COMPLETED
+  CANCELLED
+  RETURNED
+}
+
+model Order {
+  id           String      @id @default(cuid())
+  externalId   String? // номер заказа в Kaspi
+  source       OrderSource @default(MANUAL)
+  status       OrderStatus @default(COMPLETED)
+  orderedAt    DateTime
+  customerCity String?
+  isDemo       Boolean     @default(false)
+  createdAt    DateTime    @default(now())
+  items        OrderItem[]
+
+  @@unique([source, externalId])
+  @@index([orderedAt])
+}
+
+model OrderItem {
+  id            String  @id @default(cuid())
+  orderId       String
+  order         Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId     String
+  product       Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity      Int
+  returnedQty   Int     @default(0)
+  unitPriceKzt  Decimal @db.Decimal(14, 2)
+  commissionKzt Decimal @db.Decimal(14, 2) @default(0) // комиссия Kaspi за позицию
+  deliveryKzt   Decimal @db.Decimal(14, 2) @default(0) // доставка покупателю за счёт продавца
+  unitCostKzt   Decimal @db.Decimal(14, 2) @default(0) // себестоимость единицы на момент продажи
+
+  @@index([productId])
+}
+
+enum ExpenseCategory {
+  ADS
+  SALARY
+  RENT
+  TAXES
+  SERVICES
+  OTHER
+}
+
+// Общие расходы, не привязанные к конкретному заказу
+model Expense {
+  id        String          @id @default(cuid())
+  category  ExpenseCategory
+  amountKzt Decimal         @db.Decimal(14, 2)
+  date      DateTime
+  note      String?
+  isDemo    Boolean         @default(false)
+  createdAt DateTime        @default(now())
+
+  @@index([date])
+}
+
+// ───────────── Конкуренты (этап 4) ─────────────
+
+model Competitor {
+  id        String              @id @default(cuid())
+  name      String
+  storeUrl  String?
+  notes     String?
+  createdAt DateTime            @default(now())
+  products  CompetitorProduct[]
+}
+
+model CompetitorProduct {
+  id           String       @id @default(cuid())
+  competitorId String?
+  competitor   Competitor?  @relation(fields: [competitorId], references: [id], onDelete: SetNull)
+  productId    String? // наш аналогичный товар
+  product      Product?     @relation(fields: [productId], references: [id], onDelete: SetNull)
+  title        String
+  url          String
+  sellersCount Int?
+  rating       Decimal?     @db.Decimal(3, 2)
+  reviewsCount Int?
+  dataSource   String // откуда получены данные: manual, import, api
+  createdAt    DateTime     @default(now())
+  prices       PricePoint[]
+}
+
+model PricePoint {
+  id                  String            @id @default(cuid())
+  competitorProductId String
+  competitorProduct   CompetitorProduct @relation(fields: [competitorProductId], references: [id], onDelete: Cascade)
+  priceKzt            Decimal           @db.Decimal(14, 2)
+  observedAt          DateTime          @default(now())
+  source              String
+
+  @@index([competitorProductId, observedAt])
+}
+
+// ───────────── Поставщики в Китае (этап 5) ─────────────
+
+model Supplier {
+  id           String   @id @default(cuid())
+  name         String
+  platform     String // alibaba, 1688, wechat, другое
+  url          String?
+  contactName  String?
+  contactInfo  String? // WeChat ID, телефон, e-mail — вводит пользователь
+  rating       Decimal? @db.Decimal(3, 2)
+  riskNotes    String?
+  createdAt    DateTime @default(now())
+  offers       SupplierOffer[]
+  messages     NegotiationMessage[]
+  batches      StockBatch[]
+}
+
+model SupplierOffer {
+  id                String   @id @default(cuid())
+  supplierId        String
+  supplier          Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  productId         String?
+  product           Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  title             String
+  url               String?
+  priceCny          Decimal  @db.Decimal(14, 2)
+  moq               Int?
+  sampleCostCny     Decimal? @db.Decimal(14, 2)
+  productionDays    Int?
+  paymentTerms      String?
+  shippingTerms     String?
+  dataSource        String // manual, excel, screenshot
+  createdAt         DateTime @default(now())
+}
+
+model NegotiationMessage {
+  id          String   @id @default(cuid())
+  supplierId  String
+  supplier    Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  direction   String // in (от поставщика) / out (от нас)
+  textOriginal String
+  textTranslated String?
+  status      String   @default("draft") // draft, approved, sent — отправка только после подтверждения владельца
+  createdAt   DateTime @default(now())
+}

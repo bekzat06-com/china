@@ -1,0 +1,47 @@
+# Локальный запуск: docker compose up -d db   → только база данных (для npm run dev)
+#                   docker compose --profile app up -d --build → база + приложение
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ilyas
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ilyas_dev_password}
+      POSTGRES_DB: ilyas_commerce
+    ports:
+      - "127.0.0.1:5432:5432" # доступна только с вашего компьютера
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ilyas -d ilyas_commerce"]
+      interval: 5s
+      retries: 10
+
+  app:
+    profiles: ["app"]
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://ilyas:${POSTGRES_PASSWORD:-ilyas_dev_password}@db:5432/ilyas_commerce?schema=public
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # n8n для автоматизации (этап 7) — запускается только по запросу: --profile automation
+  n8n:
+    profiles: ["automation"]
+    image: n8nio/n8n:1.80.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment:
+      GENERIC_TIMEZONE: Asia/Almaty
+    volumes:
+      - n8ndata:/home/node/.n8n
+
+volumes:
+  pgdata:
+  n8ndata:
