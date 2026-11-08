@@ -2,7 +2,7 @@ import { requireUser } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import { getBusinessSettings } from "@/lib/settings";
 import { PageHeader } from "@/components/layout/page-header";
-import { DemoDataForm, SettingsForm } from "@/components/settings-forms";
+import { ChangePasswordForm, DemoDataForm, SettingsForm } from "@/components/settings-forms";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 export const metadata = { title: "Настройки" };
@@ -48,6 +48,7 @@ export default async function SettingsPage() {
           })}
         </CardContent>
       </Card>
+      <ChangePasswordForm />
       {isOwner && <DemoDataForm counts={{ products: demoProducts, orders: demoOrders }} />}
     </div>
   );

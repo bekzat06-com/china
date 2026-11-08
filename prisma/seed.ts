@@ -81,9 +81,12 @@ async function seedOwner() {
 }
 
 async function seedDemo() {
+  // Демо загружается только один раз: если владелец их удалил, повторный seed их не вернёт
+  const marker = await db.setting.findUnique({ where: { key: "demo_seeded" } });
   const already = await db.product.count({ where: { isDemo: true } });
-  if (already > 0) {
-    console.log("Демо-данные уже загружены — пропускаю");
+  if (marker || already > 0) {
+    console.log("Демо-данные уже загружались — пропускаю");
+    if (!marker) await db.setting.create({ data: { key: "demo_seeded", value: true } });
     return;
   }
   const categories = Object.fromEntries(
@@ -183,6 +186,7 @@ async function seedDemo() {
     expenses.push({ category: "SERVICES", amountKzt: 5000, date: new Date(now - m * 30 * DAY), note: "Демо: сервисы и связь", isDemo: true });
   }
   await db.expense.createMany({ data: expenses });
+  await db.setting.upsert({ where: { key: "demo_seeded" }, create: { key: "demo_seeded", value: true }, update: {} });
   console.log(`Демо-данные загружены: ${PRODUCTS.length} товаров, ${orderCounter - 1000} заказов`);
 }
 

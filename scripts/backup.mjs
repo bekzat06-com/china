@@ -2,7 +2,7 @@
 // Требуется установленный pg_dump (входит в PostgreSQL) или Docker.
 // Восстановление: psql "<DATABASE_URL>" -f backups/<файл>.sql
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 
 function loadEnv() {
   if (process.env.DATABASE_URL || !existsSync(".env")) return;
@@ -22,5 +22,15 @@ const stamp = new Date().toISOString().slice(0, 16).replace("T", "_").replace(":
 const file = `backups/ilyas_${stamp}.sql`;
 // pg_dump не понимает параметр ?schema= от Prisma — убираем его
 const cleanUrl = url.replace(/\?.*$/, "");
-execFileSync("pg_dump", ["--no-owner", "--file", file, cleanUrl], { stdio: "inherit" });
+try {
+  execFileSync("pg_dump", ["--no-owner", "--file", file, cleanUrl], { stdio: "inherit" });
+} catch (e) {
+  if (e.code !== "ENOENT") throw e;
+  // pg_dump не установлен (типично для Windows) — делаем копию через контейнер базы в Docker
+  console.log("pg_dump не найден — использую Docker (docker compose exec db pg_dump)");
+  const sql = execFileSync("docker", ["compose", "exec", "-T", "db", "pg_dump", "--no-owner", "-U", "ilyas", "ilyas_commerce"], {
+    maxBuffer: 1024 * 1024 * 1024,
+  });
+  writeFileSync(file, sql);
+}
 console.log(`Резервная копия создана: ${file}`);

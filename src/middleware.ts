@@ -2,10 +2,17 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySession } from "@/lib/auth/jwt";
 
-const PUBLIC_PATHS = ["/login", "/api/health"];
+const PUBLIC_PATHS = ["/login", "/api/health", "/setup"];
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
+  // База не подключена (например, первый деплой на Vercel) — показываем инструкцию
+  if (!process.env.DATABASE_URL && pathname !== "/setup" && !pathname.startsWith("/api/")) {
+    const url = req.nextUrl.clone();
+    url.pathname = "/setup";
+    url.search = "";
+    return NextResponse.redirect(url);
+  }
   if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"))) return NextResponse.next();
 
   const session = await verifySession(req.cookies.get(SESSION_COOKIE)?.value);

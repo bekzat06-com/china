@@ -2,6 +2,7 @@
 import { useActionState } from "react";
 import { saveSettingsAction, deleteDemoDataAction, type SettingsState, type DemoState } from "@/app/actions/settings";
 import type { BusinessSettings } from "@/lib/settings";
+import { changePasswordAction, type PasswordState } from "@/app/actions/account";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/input";
@@ -99,6 +100,30 @@ export function DemoDataForm({ counts }: { counts: { products: number; orders: n
         )}
         {state.error && <p className="mt-2 text-sm text-danger">{state.error}</p>}
         {state.message && <p className="mt-2 text-sm text-success">{state.message}</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
+export function ChangePasswordForm() {
+  const [state, action, pending] = useActionState<PasswordState, FormData>(changePasswordAction, {});
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Смена пароля</CardTitle>
+        <CardDescription>Минимум 10 символов. Рекомендуем сменить пароль, выданный при установке.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form action={action} className="grid gap-3 sm:grid-cols-3">
+          <Field label="Текущий пароль"><Input name="current" type="password" autoComplete="current-password" required /></Field>
+          <Field label="Новый пароль"><Input name="next" type="password" autoComplete="new-password" minLength={10} required /></Field>
+          <Field label="Повторите новый"><Input name="confirm" type="password" autoComplete="new-password" minLength={10} required /></Field>
+          <div className="flex items-center gap-3 sm:col-span-3">
+            <Button type="submit" disabled={pending}>{pending ? "Сохранение…" : "Сменить пароль"}</Button>
+            {state.ok && <span className="text-sm text-success">Пароль изменён</span>}
+            {state.error && <span className="text-sm text-danger">{state.error}</span>}
+          </div>
+        </form>
       </CardContent>
     </Card>
   );
