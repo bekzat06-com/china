@@ -10,6 +10,7 @@
  */
 import { PrismaClient, type Prisma } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { randomUUID } from "node:crypto";
 
 const db = new PrismaClient();
 
@@ -83,11 +84,25 @@ async function seedOwner() {
 async function seedDemo() {
   // Демо загружается только один раз: если владелец их удалил, повторный seed их не вернёт
   const marker = await db.setting.findUnique({ where: { key: "demo_seeded" } });
-  const already = await db.product.count({ where: { isDemo: true } });
-  if (marker || already > 0) {
+  if (marker) {
     console.log("Демо-данные уже загружались — пропускаю");
-    if (!marker) await db.setting.create({ data: { key: "demo_seeded", value: true } });
     return;
+  }
+  // Демо-товары есть, а отметки нет → прошлая загрузка прервалась. Удаляем неполные демо-данные и грузим заново.
+  const partial = await db.product.count({ where: { isDemo: true } });
+  if (partial > 0) {
+    const realUse = await db.orderItem.count({ where: { product: { isDemo: true }, order: { isDemo: false } } });
+    if (realUse > 0) {
+      console.log("Демо-товары используются в реальных заказах — не трогаю их");
+      await db.setting.create({ data: { key: "demo_seeded", value: true } });
+      return;
+    }
+    console.log("Найдены неполные демо-данные — удаляю и загружаю заново");
+    await db.order.deleteMany({ where: { isDemo: true } });
+    await db.stockMovement.deleteMany({ where: { isDemo: true } });
+    await db.stockBatch.deleteMany({ where: { isDemo: true } });
+    await db.expense.deleteMany({ where: { isDemo: true } });
+    await db.product.deleteMany({ where: { isDemo: true } });
   }
   const categories = Object.fromEntries(
     await Promise.all(
@@ -130,6 +145,8 @@ async function seedDemo() {
     // Генерируем продажи за последние 75 дней, не превышая остаток
     let remaining = p.stockIn;
     const movements: Prisma.StockMovementCreateManyInput[] = [];
+    const orders: Prisma.OrderCreateManyInput[] = [];
+    const items: Prisma.OrderItemCreateManyInput[] = [];
     for (let d = 75; d >= 0; d--) {
       // лёгкий рост продаж ближе к сегодняшнему дню + выходные чуть сильнее
       const day = new Date(now - d * DAY);
@@ -143,25 +160,25 @@ async function seedDemo() {
         const r = rand();
         const status = r < 0.02 ? "CANCELLED" : r < 0.02 + p.returnRate ? "RETURNED" : "COMPLETED";
         const orderedAt = new Date(day.getTime() - Math.floor(rand() * 12) * 3600_000);
-        const order = await db.order.create({
-          data: {
-            externalId: `DEMO-${orderCounter++}`,
-            source: "MANUAL",
-            status,
-            orderedAt,
-            customerCity: pick(["Алматы", "Алматы", "Алматы", "Астана", "Шымкент", "Караганда"]),
-            isDemo: true,
-            items: {
-              create: {
-                productId: product.id,
-                quantity: qty,
-                unitPriceKzt: p.price,
-                commissionKzt: Math.round((p.price * qty * p.commissionPct) / 100),
-                deliveryKzt: status === "CANCELLED" ? 0 : p.delivery,
-                unitCostKzt: p.unitCost,
-              },
-            },
-          },
+        // id генерируем сами, чтобы вставить заказы пачкой (быстро даже с удалённой базой)
+        const order = { id: randomUUID() };
+        orders.push({
+          id: order.id,
+          externalId: `DEMO-${orderCounter++}`,
+          source: "MANUAL",
+          status,
+          orderedAt,
+          customerCity: pick(["Алматы", "Алматы", "Алматы", "Астана", "Шымкент", "Караганда"]),
+          isDemo: true,
+        });
+        items.push({
+          orderId: order.id,
+          productId: product.id,
+          quantity: qty,
+          unitPriceKzt: p.price,
+          commissionKzt: Math.round((p.price * qty * p.commissionPct) / 100),
+          deliveryKzt: status === "CANCELLED" ? 0 : p.delivery,
+          unitCostKzt: p.unitCost,
         });
         if (status !== "CANCELLED") {
           remaining -= qty;
@@ -173,6 +190,8 @@ async function seedDemo() {
         }
       }
     }
+    if (orders.length) await db.order.createMany({ data: orders });
+    if (items.length) await db.orderItem.createMany({ data: items });
     if (movements.length) await db.stockMovement.createMany({ data: movements });
     await db.stockBatch.update({ where: { id: batch.id }, data: { remaining } });
   }
